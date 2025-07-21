@@ -1,0 +1,213 @@
+= CMake testing through Catch2
+Catch2 is mainy a unit testing framework for C++, but also it provides basic micro-benchmarking features, and simple BDD macros.
+
+:imagesdir: ./assets/images/
+:toc:
+:sectnums:
+
+== Introduction
+Catch2's main advantage is that using it is both simple and natural. Test names do not have to be valid identifiers, assertions looks like normal C++ boolean expressions, and sections provide a nice and local way to share set-up and tear-down code in tests.
+
+=== Example of unit test
+```cpp
+#include <catch2/catch_test_macros.hpp>
+
+#include <cstdint>
+
+uint32_t factorial( uint32_t number ) {
+    return number <= 1 ? number : factorial(number-1) * number;
+}
+
+TEST_CASE( "Factorials are computed", "[factorial]" ) {
+    REQUIRE( factorial( 1) == 1 );
+    REQUIRE( factorial( 2) == 2 );
+    REQUIRE( factorial( 3) == 6 );
+    REQUIRE( factorial(10) == 3'628'800 );
+}
+```
+
+=== Example of microbenchmark
+```cpp
+#include <catch2/catch_test_macros.hpp>
+#include <catch2/benchmark/catch_benchmark.hpp>
+
+#include <cstdint>
+
+uint64_t fibonacci(uint64_t number) {
+    return number < 2 ? number : fibonacci(number - 1) + fibonacci(number - 2);
+}
+
+TEST_CASE("Benchmark Fibonacci", "[!benchmark]") {
+    REQUIRE(fibonacci(5) == 5);
+
+    REQUIRE(fibonacci(20) == 6'765);
+    BENCHMARK("fibonacci 20") {
+        return fibonacci(20);
+    };
+
+    REQUIRE(fibonacci(25) == 75'025);
+    BENCHMARK("fibonacci 25") {
+        return fibonacci(25);
+    };
+}
+```
+
+NOTE: Benchmark atrn't run by default, so you need to run it explicitly with the `[!benchmark]` tag.
+
+== Installing Catch2
+NOTE: First and foremost, I'll talk about installing Catch2 through the `FetchContent` API.
+
+First thing first, you'll need to pull Catch2 from the internet through github after chooosing the version you are looking for, you'll just need to use `FetchContent` API like so:
+```cmake
+include(FetchContent)
+
+FetchContent_Declare(
+    Catch2
+	GIT_REPOSITORY  https://github.com/catchorg/Catch2.git
+    GIT_TAG         v3.8.1
+)
+
+FetchContent_MakeAvailable(Catch2)
+list(APPEND CMAKE_MODULE_PATH "${catch2_SOURCE_DIR}/extras")
+```
+
+NOTE: The code above is focusing on the `FetchContent` functions, however you can see that some things are first fetched to make use of the API.
+
+Then, once you have pulled Catch2 from github, you are making it available to the CMake's project and also, *NEVER FORGET TO ADD THE catchorg/extras TO THE CMAKE_MODULE_PATH*. 
+
+== Getting Catch2
+Ideally you should be using Catch2 through its link:https://github.com/catchorg/Catch2/blob/devel/docs/cmake-integration.md#top[CMake integration]. Catch2 also provides pkg-config files and two file (header + cpp) distribution, but this documentation will assume you are using CMake. If you are using the two file distribution instead, remember to replace the included header with `catch_almagated.hpp` (link:https://github.com/catchorg/Catch2/blob/devel/docs/migrate-v2-to-v3.md#how-to-migrate-projects-from-v2-to-v3[step by step instructions])
+
+=== Writing tests
+Let's start with a really simple example (link:https://github.com/catchorg/Catch2/blob/devel/examples/010-TestCase.cpp[code]). Say you have written a function to calculate factorials and now you want to test it (let's leave aside TDD for now).
+
+```cpp
+unsigned int factorial( unsigned int number ) {
+    return number <= 1 ? number : factorial(number-1)*number;
+}
+```
+
+NOTE: Now to test this function, we'll make use of Catch2.
+
+```cpp
+#include <catch2/catch_test_macros.hpp>
+
+unsigned int factorial( unsigned int number ) {
+    return number <= 1 ? number : factorial(number-1)*number;
+}
+
+TEST_CASE( "Factorials are computed", "[factorial]" ) {
+    REQUIRE( factorial(1) == 1 );
+    REQUIRE( factorial(2) == 2 );
+    REQUIRE( factorial(3) == 6 );
+    REQUIRE( factorial(10) == 3628800 );
+}
+```
+
+This will compile to a complete executable with responds to link:https://github.com/catchorg/Catch2/blob/devel/docs/command-line.md#top[command line arguments]. If you are just runing it with no arguments, it will execute all test cases (in this case there is just one), report any failures, report a summary of how many tests passed and failed and return the number of failed tests (useful for if you just want a yes/no answer to: "did it work ?").
+
+Anyway, as the tests above as written will pass, but there is a bug. The problem is that `factorial(0)` should return `1`. Let's add another assertion to the test case.
+
+```cpp
+TEST_CASE( "Factorials are computed", "[factorial]" ) {
+    REQUIRE( factorial(0) == 1 );
+    REQUIRE( factorial(1) == 1 );
+    REQUIRE( factorial(2) == 2 );
+    REQUIRE( factorial(3) == 6 );
+    REQUIRE( factorial(10) == 3628800 );
+}
+```
+After compiling and runing this test scenario, another compile & run cycle, we'll see a test failure. The output will look something like:
+
+```bash
+Example.cpp:9: FAILED:
+  REQUIRE( factorial(0) == 1 )
+with expansion:
+  0 == 1
+```
+
+NOTE: The output contains both the original expression, `REQUIRE(factorial(0) == 1)` and the actual value returned by the call to the `Factorial` function `0`
+
+However we can fix this bug by slightly modifying the function to be:
+
+```cpp
+unsigned int factorial(unsigned int number) {
+    return number > 1 ? factorial(number-1)*number : 1;
+}
+```
+
+== Testing your library
+Let's take the library named `my_lib` and add the factorial funciton like so:
+
+```cpp
+unsigned int factorial(unsigned int number) {
+    return number <= 1 ? number : factorial(number - 1) * number;
+}
+```
+
+Let's add documentation regarding this function to use the doxyge, part of this project.
+
+```cpp
+}
+
+/**
+ * @brief Make the factorial of the number passed as parameter
+ * @param number The number where it's factorial is going to be returned
+ * @return unsigned int being the factorial of the number passed as parameter
+ */
+std::uint32_t factorial(unsigned int number) {
+    return number <= 1 ? number : factorial(number - 1) * number;
+}
+```
+
+=== Creating the test
+Inside of the `my_lib` directory, create a folder named `tests`, this folder should contains a `CMakeLists.txt` as well as a `main.cc` file like so:
+
+image::lib-folder-structure.png[]
+
+NOTE: This `main.cc` file is the main of the test that is used to test the library. Note that the `app` still have a `main` but not for the same reason.
+
+== Catch2 and CTest
+Something that is good with CMake is the fact that you can have a target that isn't dependent on a testing library such as Catch2.
+
+=== Testing using CTest
+When you run the tests from your build environment, what really happens is that the build environment runs `CTests. `CTest` is an executable that comes with CMake; it handles running the tests for the project. While CTest works well with CMake, you do not have to use CMake in order to use CTest.
+
+The main input file for CTest is called `CTestTestfile.cmake`. This file will be created in each directory that was processed by CMake (typically every directory with a CMakeLists file). The syntax of `CTestTestfile.cmake` is like the regular CMake syntax, with a subset of the commands available. If CMake is used to generate testing files, they will list any subdirectories that need to be processed as well as any `add_test` calls. The subdirectories are those that were added by the `add_subdirectory` commands. CTest can then parse these files to determine what tests to run. An example of such a file is shown below:
+
+```cmake
+# CMake generated Testfile for
+# Source directory: C:/CMake
+# Build directory: C:/CMakeBin
+#
+# This file includes the relevant testing commands required
+# for testing this directory and lists subdirectories to
+# be tested as well.
+
+add_test (SystemInformationNew ...)
+
+add_subdirectory (Source/kwsys)
+add_subdirectory (Utilities/cmzlib)
+```
+
+When CTest parses the `CTestTestfile.cmake` files, it will extract the list of tests from them. These tests will be run, and for each test, CTest will display the name of the test and its status. Consider the following sample output:
+
+```cmake
+$ ctest
+Test project C:/CMake-build26
+        Start 1: SystemInformationNew
+ 1/21 Test  #1: SystemInformationNew ......   Passed    5.78 sec
+        Start 2: kwsys.testEncode
+ 2/21 Test  #2: kwsys.testEncode ..........   Passed    0.02 sec
+        Start 3: kwsys.testTerminal
+ 3/21 Test  #3: kwsys.testTerminal ........   Passed    0.00 sec
+        Start 4: kwsys.testAutoPtr
+ 4/21 Test  #4: kwsys.testAutoPtr .........   Passed    0.02 sec
+        Start 5: kwsys.testHashSTL
+ 5/21 Test  #5: kwsys.testHashSTL .........   Passed    0.02 sec
+...
+100% tests passed, 0 tests failed out of 21
+Total Test time (real) =  59.22 sec
+```
+
+IMPORTANT: Let say you are making one executable per test cases, and you want to test 5 libraries, that means you'll have to make 5 executables that you will have to run, but if you are using CMake with CTest, what it can do is running all the test you defined on your executables with one binary. That can comes handy when you are using something like a test automation such as Jenkins.
